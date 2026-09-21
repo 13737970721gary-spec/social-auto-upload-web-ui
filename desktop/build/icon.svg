@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- 主渐变：indigo → cyan -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="0.55" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+    <!-- 顶部柔光 -->
+    <radialGradient id="glow" cx="0.5" cy="0.0" r="0.7">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <!-- 底部高光 -->
+    <linearGradient id="shine" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <!-- 内阴影蒙版（裁剪到圆角矩形） -->
+    <clipPath id="rounded">
+      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224"/>
+    </clipPath>
+  </defs>
+
+  <!-- 圆角矩形底 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+  <!-- 顶部柔光 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#glow)"/>
+  <!-- 底部高光 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#shine)"/>
+
+  <!-- 装饰：三条斜线，呼应"千帆"航行感 -->
+  <g clip-path="url(#rounded)" opacity="0.18">
+    <path d="M -100 820 L 1124 540 L 1240 580 L -50 870 Z" fill="#ffffff"/>
+    <path d="M -100 900 L 1124 620 L 1240 660 L -50 950 Z" fill="#ffffff"/>
+  </g>
+
+  <!-- "千"字 -->
+  <text x="512" y="512"
+        font-family="'Microsoft YaHei','PingFang SC','Heiti SC','Noto Sans CJK SC',sans-serif"
+        font-weight="900"
+        font-size="640"
+        fill="#ffffff"
+        text-anchor="middle"
+        dominant-baseline="central"
+        style="letter-spacing: -20px;">千</text>
+</svg>
