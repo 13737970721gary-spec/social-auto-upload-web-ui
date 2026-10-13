@@ -23,6 +23,8 @@ export interface Profile {
 export interface ProfileRegistry {
   profiles: Profile[];
   lastUsed: string | null;
+  /** 用户是否开启了内置 MCP 服务（重启后记忆） */
+  mcpEnabled?: boolean;
 }
 
 const REGISTRY_FILE = () => path.join(app.getPath('userData'), 'profiles.json');
