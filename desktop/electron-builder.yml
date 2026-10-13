@@ -1,0 +1,73 @@
+appId: com.qianfan.sync
+productName: 千帆云递
+copyright: Copyright © 2026 千帆云递
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - "dist/**"
+  - "package.json"
+
+# 只保留中文/英文语言包（裁掉 50+ 语言，省 ~18MB）
+electronLanguages: [zh-CN, en-US]
+
+# 打包后自动把「千」字图标嵌入主 exe（见 after-pack.js）
+afterPack: ./after-pack.js
+
+extraResources:
+  - { from: "runtime-seed", to: "runtime-seed", filter: ["**/*"] }
+  # 版本号文件（/api/system-info 读取）
+  - { from: "../versions", to: "versions" }
+  # 更新日志（/changelog 页面列表与详情）
+  - { from: "../changelog", to: "changelog", filter: ["**/*"] }
+  # 后端业务代码（排除 venv / 缓存 / 测试 / 本地存储 —— 用户数据走 SAU_DATA_DIR）
+  - from: "../backend"
+    to: "backend"
+    filter:
+      - "**/*"
+      - "!**/.venv/**"
+      - "!**/__pycache__/**"
+      - "!**/.pytest_cache/**"
+      - "!**/tests/**"
+      - "!**/*.log"
+  # 前端构建产物 → resources/frontend/（app.py 的 FRONTEND_DIR = backend.parent / 'frontend'）
+  - { from: "../frontend/dist", to: "frontend", filter: ["**/*"] }
+
+# === Windows ===
+win:
+  # NSIS 单文件安装包（LZMA solid，体积最优）+ zip 绿色版
+  target:
+    - { target: nsis, arch: [x64] }
+    - { target: zip, arch: [x64] }
+  signAndEditExecutable: false   # 图标由打包后 rcedit 步骤嵌入
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 千帆云递
+
+# === macOS ===
+# 当前选择 §12 决策 6：未签名 macOS 安装包 + 引导用户右键打开
+mac:
+  target: [{ target: dmg, arch: [arm64, x64] }]
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false   # ← 未采购 Developer ID
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# === Linux ===
+linux:
+  target: [AppImage, deb]
+  category: Utility
+  desktop:
+    Name: 千帆云递
+    Comment: 一站式多平台发布工具
+  artifactName: ${productName}-${version}-${arch}.${ext}
+deb:
+  depends: [libnss3, libatk-bridge2.0-0, libgtk-3-0, libgbm1, libasound2, git]
