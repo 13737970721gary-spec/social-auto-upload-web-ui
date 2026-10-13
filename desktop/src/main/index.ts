@@ -1,9 +1,11 @@
-import { app, BrowserWindow, shell, dialog } from 'electron';
+import { app, BrowserWindow, shell, dialog, ipcMain } from 'electron';
 import * as path from 'path';
 import { initLogger, log, closeLogger } from './log';
-import { resolvePaths, dumpPaths } from './paths';
+import { resolvePaths, setActiveDataDir, resetPathsCache, dumpPaths } from './paths';
 import { RuntimeManager } from './runtime';
 import { startBackend, BackendHandle } from './backend';
+import { runProfileGate, needsProfileGate, injectSwitchButton } from './wizard';
+import { Profile } from './profiles';
 
 const SHELL_VERSION = '1.3.0-alpha.1';
 let mainWindow: BrowserWindow | null = null;
@@ -73,6 +75,39 @@ async function showFatal(msg: string): Promise<void> {
   }
 }
 
+let rt: RuntimeManager | null = null;
+let switchHandlerRegistered = false;
+
+async function selectProfile(): Promise<Profile> {
+  if (needsProfileGate()) {
+    log('[profiles] 尚无账户，进入创建向导');
+  } else {
+    log('[profiles] 显示账户选择');
+  }
+  return new Promise<Profile>((resolve) => runProfileGate(resolve));
+}
+
+/** 用指定账户启动/重启后端并加载主界面 */
+async function startForProfile(profile: Profile): Promise<void> {
+  if (!rt) throw new Error('运行时未初始化');
+  setActiveDataDir(profile.dataDir);
+  resetPathsCache();
+  log(`[profiles] 启动账户: ${profile.name} dataDir=${profile.dataDir}`);
+  log(dumpPaths());
+  await setStatus(`账户「${profile.name}」，正在启动后端服务…`);
+
+  backend?.stop();
+  backend = await startBackend(rt, (s) => { void setStatus(s); }, { profileName: profile.name });
+
+  await setStatus('服务就绪，正在加载界面…');
+  const target = `http://127.0.0.1:${backend.port}/`;
+  log('loading', target);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadURL(target);
+    injectSwitchButton(mainWindow, profile.name);
+  }
+}
+
 async function bootstrap(): Promise<void> {
   initLogger();
   log(`==== QianFan Sync Desktop ${SHELL_VERSION} ====`);
@@ -96,21 +131,37 @@ async function bootstrap(): Promise<void> {
   mainWindow.removeMenu();
   await mainWindow.loadURL(dataUrl(LOADING_HTML));
 
-  const rt = new RuntimeManager();
+  rt = new RuntimeManager();
   rt.bootstrap();
   log('--- runtime detect ---');
   const statuses = rt.detectAll();
   for (const s of statuses) {
     log(`  ${s.id.padEnd(13)} ${s.ready ? 'OK ' : 'NO '} ${s.path ?? '-'}  ${s.version ?? ''}`);
   }
-  await setStatus(`检测运行时：${statuses.filter(s => s.ready).length}/${statuses.length} 就绪，正在启动后端…`);
+  await setStatus(`检测运行时：${statuses.filter(s => s.ready).length}/${statuses.length} 就绪`);
 
-  backend = await startBackend(rt, (s) => { void setStatus(s); });
+  // 注册切换账户入口（主界面右下角悬浮按钮 → 停服务 → 重走账户选择 → 重启服务）
+  if (!switchHandlerRegistered) {
+    switchHandlerRegistered = true;
+    ipcMain.handle('app:switch-profile', async () => {
+      try {
+        log('[profiles] 用户请求切换账户，停止当前后端…');
+        backend?.stop();
+        backend = null;
+        const profile = await selectProfile();
+        await startForProfile(profile);
+        return { ok: true, name: profile.name };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log('[profiles] 切换账户失败:', msg);
+        try { await showFatal('切换账户失败：' + msg); } catch {}
+        return { ok: false, error: msg };
+      }
+    });
+  }
 
-  await setStatus('服务就绪，正在加载界面…');
-  const target = `http://127.0.0.1:${backend.port}/`;
-  log('loading', target);
-  await mainWindow.loadURL(target);
+  const profile = await selectProfile();
+  await startForProfile(profile);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);

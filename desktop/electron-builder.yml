@@ -18,6 +18,10 @@ afterPack: ./after-pack.js
 
 extraResources:
   - { from: "runtime-seed", to: "runtime-seed", filter: ["**/*"] }
+  # 版本号文件（/api/system-info 读取）
+  - { from: "../versions", to: "versions" }
+  # 更新日志（/changelog 页面列表与详情）
+  - { from: "../changelog", to: "changelog", filter: ["**/*"] }
   # 后端业务代码（排除 venv / 缓存 / 测试 / 本地存储 —— 用户数据走 SAU_DATA_DIR）
   - from: "../backend"
     to: "backend"

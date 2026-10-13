@@ -268,6 +268,8 @@
         <div class="tech-section">
           <h4 class="tech-section-title">版本</h4>
           <div class="version-badge">v{{ appVersion }}</div>
+          <div v-if="profileName" class="data-dir">当前账户：{{ profileName }}</div>
+          <div v-if="dataDir" class="data-dir" :title="dataDir">数据目录：{{ dataDir }}</div>
         </div>
         <div class="tech-section">
           <h4 class="tech-section-title">前端</h4>
@@ -379,6 +381,8 @@ const loading = ref(false)
 const saving = ref(false)
 const clearingCache = ref(false)
 const appVersion = ref('--')
+const dataDir = ref('')
+const profileName = ref('')
 const cacheInfo = reactive({
   frames: { count: 0, size: 0 },
   logs: { count: 0, size: 0, oldCount: 0 },
@@ -391,6 +395,8 @@ const fetchSystemInfo = async () => {
     const res = await http.get('/api/system-info')
     if (res.code === 200 && res.data) {
       appVersion.value = res.data.version || '--'
+      dataDir.value = res.data.data_dir || ''
+      profileName.value = res.data.profile || ''
       if (res.data.cache) {
         cacheInfo.frames = res.data.cache.frames || { count: 0, size: 0 }
         cacheInfo.logs = res.data.cache.logs || { count: 0, size: 0, oldCount: 0 }
@@ -839,6 +845,18 @@ onMounted(() => {
         font-weight: 700;
         font-family: 'Fira Code', monospace;
         letter-spacing: 0.5px;
+      }
+
+      .data-dir {
+        margin-top: 8px;
+        font-size: 11px;
+        color: $text-muted;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        direction: rtl; /* 长路径从左侧截断，保留末尾 */
+        text-align: left;
       }
 
       .tech-section-title {

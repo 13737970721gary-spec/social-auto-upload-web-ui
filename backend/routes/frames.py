@@ -295,9 +295,12 @@ def clear_cache():
 def system_info():
     """Return version and cache size info."""
     # Read version from versions file
+    # 候选顺序：用户数据目录上级(开发模式仓库根) → 后端代码目录上级(打包模式 resources 根) → 数据目录
     version = 'unknown'
+    _backend_root = str(Path(__file__).resolve().parent.parent)
     for candidate in [
         os.path.join(str(BASE_DIR), '..', 'versions'),
+        os.path.join(_backend_root, '..', 'versions'),
         os.path.join(str(BASE_DIR), 'versions'),
     ]:
         if os.path.isfile(candidate):
@@ -378,6 +381,8 @@ def system_info():
         "code": 200,
         "data": {
             "version": version,
+            "data_dir": str(BASE_DIR),
+            "profile": os.environ.get('SAU_PROFILE_NAME', ''),
             "cache": {
                 "frames": {"count": frames_count, "size": frames_size},
                 "logs": {"count": logs_count, "size": logs_size, "oldCount": logs_old_count},

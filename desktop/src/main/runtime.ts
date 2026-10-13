@@ -129,9 +129,18 @@ export class RuntimeManager {
       : [path.join(dir, 'chrome')];
     const hit = this._firstExisting(candidates);
     if (!hit) return { id: 'cloakbrowser', ready: false, source: 'missing', message: 'CloakBrowser 未解压到 runtime/cloakbrowser/' };
-    const v = this._execSafe(hit, ['--version', '--no-sandbox'], { timeoutMs: 5000 });
+    // Windows 上禁止用 chrome.exe --version 探测版本：
+    // chrome.exe 是 GUI 程序，--version 会短暂拉起一个浏览器窗口再退出
+    // （windowsHide 对 GUI 程序无效），用户每次启动都会看到浏览器闪一下。
+    // 版本号仅用于日志展示，Windows 上直接跳过探测（保持 unknown）；
+    // 非 Windows 平台 --version 是 CLI 行为，无窗口，保持原探测。
+    let version = 'unknown';
+    if (process.platform !== 'win32') {
+      const v = this._execSafe(hit, ['--version', '--no-sandbox'], { timeoutMs: 5000 });
+      version = v?.split(' ').pop() ?? 'unknown';
+    }
     return {
-      id: 'cloakbrowser', ready: true, path: hit, version: v?.split(' ').pop() ?? 'unknown',
+      id: 'cloakbrowser', ready: true, path: hit, version,
       source: 'bundled',
     };
   }

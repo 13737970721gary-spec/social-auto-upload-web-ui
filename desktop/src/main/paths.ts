@@ -1,10 +1,13 @@
 import { app } from 'electron';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 /**
  * 跨平台解析用户数据目录、运行时目录、业务代码目录。
- * 与 docs/桌面客户端打包方案.md §3.2 保持一致。
+ *
+ * 数据目录由「本地账户」决定：每个账户有自己隔离的 dataDir，
+ * 启动选择账户后通过 setActiveDataDir() 注入，再传给后端 SAU_DATA_DIR。
  */
 
 export interface ResolvedPaths {
@@ -12,13 +15,37 @@ export interface ResolvedPaths {
   resourcesDir: string;      // process.resourcesPath
   userData: string;          // app.getPath('userData')
   runtimeDir: string;        // userData/runtime
-  dataDir: string;           // userData/data  ← SAU_DATA_DIR
+  dataDir: string;           // 当前账户的数据目录 ← SAU_DATA_DIR
   logsDir: string;           // userData/logs
   appCodeDir: string;        // userData/app-code
   runtimeSeed: string;       // resources/runtime-seed（只读）
 }
 
 let cached: ResolvedPaths | null = null;
+let activeDataDir: string | null = null;
+
+/** 账户选择完成后注入本次启动使用的数据目录 */
+export function setActiveDataDir(dir: string): void {
+  activeDataDir = dir;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  cached = null;
+}
+
+export function getActiveDataDir(): string {
+  return activeDataDir || defaultDataDir();
+}
+
+function defaultDataDir(): string {
+  return path.join(app.getPath('userData'), 'data');
+}
+
+export function resetPathsCache(): void {
+  cached = null;
+}
+
+export function ts(): string {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19);
+}
 
 export function resolvePaths(): ResolvedPaths {
   if (cached) return cached;
@@ -30,20 +57,12 @@ export function resolvePaths(): ResolvedPaths {
     resourcesDir,
     userData,
     runtimeDir: path.join(userData, 'runtime'),
-    dataDir: path.join(userData, 'data'),
+    dataDir: getActiveDataDir(),
     logsDir: path.join(userData, 'logs'),
     appCodeDir: path.join(userData, 'app-code'),
     runtimeSeed: path.join(resourcesDir, 'runtime-seed'),
   };
   return cached;
-}
-
-export function pickPort(): number {
-  return 5409;
-}
-
-export function ts(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 export function dumpPaths(): string {
@@ -53,7 +72,7 @@ export function dumpPaths(): string {
     `resourcesDir = ${p.resourcesDir}`,
     `userData     = ${p.userData}`,
     `runtimeDir   = ${p.runtimeDir}`,
-    `runtimeSeed  = ${p.runtimeSeed}`,
+    `dataDir      = ${p.dataDir}`,
     `os.tmpdir()  = ${os.tmpdir()}`,
   ].join('\n');
 }

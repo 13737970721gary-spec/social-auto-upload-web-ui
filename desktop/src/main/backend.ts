@@ -24,6 +24,7 @@ export interface BackendHandle {
 export async function startBackend(
   rt: RuntimeManager,
   onStatus?: (s: string) => void,
+  opts?: { profileName?: string },
 ): Promise<BackendHandle> {
   const say = (s: string) => { log(s); try { onStatus?.(s); } catch {} };
   const p = resolvePaths();
@@ -46,6 +47,7 @@ export async function startBackend(
   const env = rt.buildEnv({
     SAU_PORT: String(port),
     SAU_DATA_DIR: p.dataDir,
+    SAU_PROFILE_NAME: opts?.profileName || '',
     PYTHONUNBUFFERED: '1',
   });
 
