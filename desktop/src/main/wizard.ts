@@ -329,9 +329,12 @@ function gateHtml(): string {
     frames: '${ICONS.image}',
   };
   var LABELS = { db:'数据库', cookiesFile:'账号 Cookie', cookies:'浏览器会话',
-    uploads:'素材上传记录', thumbnails:'封面', upload_chunks:'上传分片缓存', frames:'抽帧图片' };
+    uploads:'素材上传记录', thumbnails:'封面图片', covers:'封面缓存',
+    upload_chunks:'上传分片缓存', frames:'抽帧图片', materials:'素材库文件',
+    videoFile:'视频文件', s3_video_cache:'S3 视频缓存' };
   var KINDIC = { db:'db', cookiesFile:'cookie', cookies:'cookie', uploads:'upload',
-    thumbnails:'cover', upload_chunks:'chunk', frames:'frames' };
+    thumbnails:'cover', covers:'cover', upload_chunks:'chunk', frames:'frames',
+    materials:'folder', videoFile:'folder', s3_video_cache:'db' };
 
   function $(id){ return document.getElementById(id); }
   function show(el,on){ el.classList.toggle('hide',!on); }
@@ -495,15 +498,19 @@ function gateHtml(): string {
     if (step===2){
       var useCustom = $('use-custom-dir').checked;
       if (useCustom && !customDir){ nx.disabled=false; return; }
-      nx.disabled = true;
       var hasSrc = hasSource();
-      if (hasSrc){ show($('imp-done'),false); show($('imp-prog'),true);
-        document.querySelector('#cs3 .prog h3').textContent = hasSrc ? '正在导入数据并创建账户…' : '正在创建账户…';
-        wiz.onProgress(function(info){
-          $('bar').style.width = info.pct+'%';
-          $('ptext').textContent = '已复制 '+info.copied+' / '+info.total+' 个文件（'+info.pct+'%）';
-        });
+      // 立即切到步骤 3 显示加载动画（否则导入期间界面停在步骤 2，看起来像卡死）
+      setStep(3);
+      nx.disabled = true; // 导入期间锁定，防止中途点「进入」
+      show($('imp-done'),false); show($('imp-prog'),true);
+      if (!hasSrc){
+        document.querySelector('#cs3 .prog h3').textContent = '正在创建账户…';
+        $('ptext').textContent = '正在初始化数据目录…';
       }
+      wiz.onProgress(function(info){
+        $('bar').style.width = info.pct+'%';
+        $('ptext').textContent = '已复制 '+info.copied+' / '+info.total+' 个文件（'+info.pct+'%）';
+      });
       var res = await wiz.create({
         name: $('f-name').value.trim(),
         avatarDataUrl: avatar ? avatar.dataUrl : null,
@@ -511,7 +518,6 @@ function gateHtml(): string {
         sourceDir: hasSrc ? sourcePick.inspect.dataDir : null,
       });
       show($('imp-prog'),false); show($('imp-done'),true);
-      setStep(3);
       if (!res || !res.ok){
         $('sum-wrap').innerHTML = '<div class="hint err" style="display:block">'+ (res&&res.error||'创建失败') +'</div>';
         nx.disabled = false; nx.textContent = '返回修改';
