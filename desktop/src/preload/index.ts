@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('qfsShell', {
   shellVersion: '1.3.0-alpha.1',
   ping: () => ipcRenderer.invoke('qfs:ping'),
   switchProfile: () => ipcRenderer.invoke('app:switch-profile'),
+  toggleMcp: () => ipcRenderer.invoke('app:mcp-toggle'),
 });
 
 // 启动账户门控（选择/创建/删除），仅门控窗口使用

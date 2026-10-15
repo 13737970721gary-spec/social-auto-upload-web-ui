@@ -23,6 +23,8 @@ export interface Profile {
 export interface ProfileRegistry {
   profiles: Profile[];
   lastUsed: string | null;
+  /** 用户是否开启了内置 MCP 服务（重启后记忆） */
+  mcpEnabled?: boolean;
 }
 
 const REGISTRY_FILE = () => path.join(app.getPath('userData'), 'profiles.json');
@@ -107,16 +109,24 @@ export function targetHasData(dataDir: string): boolean {
   return fs.existsSync(path.join(dataDir, 'db', 'database.db'));
 }
 
-// 需要迁移的数据子目录（logs 不迁）与用户可读标签
-const MIGRATE_SUBDIRS: Array<{ dir: string; label: string }> = [
-  { dir: 'db', label: '数据库' },
-  { dir: 'cookiesFile', label: '账号 Cookie' },
-  { dir: 'cookies', label: '浏览器会话' },
-  { dir: 'uploads', label: '素材上传记录' },
-  { dir: 'thumbnails', label: '封面' },
-  { dir: 'upload_chunks', label: '上传分片缓存' },
-  { dir: 'frames', label: '抽帧图片' },
-];
+// 迁移时跳过的目录（日志类，无迁移价值）；其余子目录全部迁移（未知目录按目录名展示），
+// 避免硬编码清单漏掉 covers / materials / videoFile 等重要数据
+const MIGRATE_SKIP_DIRS = new Set(['logs', 'dev-logs']);
+
+// 已知目录的用户可读标签（未知目录回退用目录名）
+const MIGRATE_LABELS: Record<string, string> = {
+  db: '数据库',
+  cookiesFile: '账号 Cookie',
+  cookies: '浏览器会话',
+  uploads: '素材上传记录',
+  thumbnails: '封面图片',
+  covers: '封面缓存',
+  upload_chunks: '上传分片缓存',
+  frames: '抽帧图片',
+  materials: '素材库文件',
+  videoFile: '视频文件',
+  s3_video_cache: 'S3 视频缓存',
+};
 
 export interface ImportSummaryItem {
   dir: string;
@@ -145,19 +155,19 @@ export async function importData(
     if (targetHasData(dstDataDir)) {
       return { ok: false, error: '目标数据目录里已有数据（已存在 database.db），为避免覆盖请换一个空目录', copiedFiles: 0, copiedBytes: 0, items: [] };
     }
-    // 预统计
+    // 预统计：扫描源数据目录下全部子目录（跳过日志），不再硬编码清单
     const perDir: Record<string, { files: number; bytes: number }> = {};
     let totalFiles = 0;
-    for (const { dir } of MIGRATE_SUBDIRS) {
-      const s = path.join(srcDataDir, dir);
-      if (!fs.existsSync(s)) continue;
-      perDir[dir] = { files: 0, bytes: 0 };
+    for (const entry of fs.readdirSync(srcDataDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || MIGRATE_SKIP_DIRS.has(entry.name)) continue;
+      const s = path.join(srcDataDir, entry.name);
+      perDir[entry.name] = { files: 0, bytes: 0 };
       const walk = (d: string) => {
         for (const name of fs.readdirSync(d)) {
           const p = path.join(d, name);
           const st = fs.statSync(p);
           if (st.isDirectory()) walk(p);
-          else { perDir[dir].files++; perDir[dir].bytes += st.size; totalFiles++; }
+          else { perDir[entry.name].files++; perDir[entry.name].bytes += st.size; totalFiles++; }
         }
       };
       walk(s);
@@ -166,9 +176,9 @@ export async function importData(
     // 异步复制：每 50 个文件让出一次事件循环，避免阻塞主进程（否则进度条不动、界面假死）
     let copied = 0;
     fs.mkdirSync(dstDataDir, { recursive: true });
-    for (const { dir } of MIGRATE_SUBDIRS) {
-      const s = path.join(srcDataDir, dir);
-      if (!fs.existsSync(s)) continue;
+    for (const entry of fs.readdirSync(srcDataDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || MIGRATE_SKIP_DIRS.has(entry.name)) continue;
+      const s = path.join(srcDataDir, entry.name);
       const copyWalk = async (d: string, dd: string): Promise<void> => {
         fs.mkdirSync(dd, { recursive: true });
         for (const name of fs.readdirSync(d)) {
@@ -192,13 +202,14 @@ export async function importData(
           }
         }
       };
-      await copyWalk(s, path.join(dstDataDir, dir));
+      await copyWalk(s, path.join(dstDataDir, entry.name));
     }
     if (totalFiles === 0) onProgress({ copied: 0, total: 0, pct: 100 });
 
-    const items: ImportSummaryItem[] = MIGRATE_SUBDIRS
-      .filter(({ dir }) => perDir[dir] && perDir[dir].files > 0)
-      .map(({ dir, label }) => ({ dir, label, files: perDir[dir].files, bytes: perDir[dir].bytes }));
+    const items: ImportSummaryItem[] = Object.keys(perDir)
+      .filter((dir) => perDir[dir].files > 0)
+      .map((dir) => ({ dir, label: MIGRATE_LABELS[dir] || dir, files: perDir[dir].files, bytes: perDir[dir].bytes }));
+    items.sort((a, b) => b.bytes - a.bytes);
     const copiedBytes = items.reduce((sum, it) => sum + it.bytes, 0);
     log(`[profiles] 数据导入完成: ${copied} 个文件 (${(copiedBytes / 1048576).toFixed(1)} MB) → ${dstDataDir}`);
     return { ok: true, copiedFiles: copied, copiedBytes, items };

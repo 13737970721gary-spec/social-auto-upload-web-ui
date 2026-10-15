@@ -4,8 +4,9 @@ import { initLogger, log, closeLogger } from './log';
 import { resolvePaths, setActiveDataDir, resetPathsCache, dumpPaths } from './paths';
 import { RuntimeManager } from './runtime';
 import { startBackend, BackendHandle } from './backend';
-import { runProfileGate, needsProfileGate, injectSwitchButton } from './wizard';
-import { Profile } from './profiles';
+import { runProfileGate, needsProfileGate, injectHubButton } from './wizard';
+import { Profile, readRegistry, writeRegistry } from './profiles';
+import { isMcpRunning, getMcpPort, startMcp, stopMcp } from './mcp';
 
 const SHELL_VERSION = '1.3.0-alpha.1';
 let mainWindow: BrowserWindow | null = null;
@@ -87,7 +88,7 @@ async function selectProfile(): Promise<Profile> {
   return new Promise<Profile>((resolve) => runProfileGate(resolve));
 }
 
-/** 用指定账户启动/重启后端并加载主界面 */
+/** 用指定账户启动/重启后端并加载主界面（MCP 开启时随账户重启，DB_PATH 跟随数据目录） */
 async function startForProfile(profile: Profile): Promise<void> {
   if (!rt) throw new Error('运行时未初始化');
   setActiveDataDir(profile.dataDir);
@@ -99,12 +100,21 @@ async function startForProfile(profile: Profile): Promise<void> {
   backend?.stop();
   backend = await startBackend(rt, (s) => { void setStatus(s); }, { profileName: profile.name });
 
+  // MCP 开启状态随账户重启（DB_PATH 指向新账户数据库）
+  const reg = readRegistry();
+  if (reg.mcpEnabled) {
+    stopMcp();
+    await setStatus('正在启动 MCP 服务…');
+    const r = await startMcp(rt, backend.port, path.join(profile.dataDir, 'db', 'database.db'));
+    log('[mcp] 随账户启动' + (r.ok ? `成功（端口 ${r.port}）` : `失败: ${r.error}`));
+  }
+
   await setStatus('服务就绪，正在加载界面…');
   const target = `http://127.0.0.1:${backend.port}/`;
   log('loading', target);
   if (mainWindow && !mainWindow.isDestroyed()) {
     await mainWindow.loadURL(target);
-    injectSwitchButton(mainWindow, profile.name);
+    injectHubButton(mainWindow, profile.name, { running: isMcpRunning(), port: getMcpPort() });
   }
 }
 
@@ -140,7 +150,7 @@ async function bootstrap(): Promise<void> {
   }
   await setStatus(`检测运行时：${statuses.filter(s => s.ready).length}/${statuses.length} 就绪`);
 
-  // 注册切换账户入口（主界面右下角悬浮按钮 → 停服务 → 重走账户选择 → 重启服务）
+  // 注册切换账户 + MCP 开关入口（主界面右下角齿轮菜单）
   if (!switchHandlerRegistered) {
     switchHandlerRegistered = true;
     ipcMain.handle('app:switch-profile', async () => {
@@ -148,6 +158,7 @@ async function bootstrap(): Promise<void> {
         log('[profiles] 用户请求切换账户，停止当前后端…');
         backend?.stop();
         backend = null;
+        stopMcp();
         const profile = await selectProfile();
         await startForProfile(profile);
         return { ok: true, name: profile.name };
@@ -156,6 +167,29 @@ async function bootstrap(): Promise<void> {
         log('[profiles] 切换账户失败:', msg);
         try { await showFatal('切换账户失败：' + msg); } catch {}
         return { ok: false, error: msg };
+      }
+    });
+    ipcMain.handle('app:mcp-toggle', async () => {
+      try {
+        if (isMcpRunning()) {
+          stopMcp();
+          const reg = readRegistry();
+          reg.mcpEnabled = false;
+          writeRegistry(reg);
+          log('[mcp] 用户已关闭 MCP 服务');
+          return { ok: true, running: false, port: null };
+        }
+        if (!backend) return { ok: false, error: '后端服务未就绪' };
+        const dbPath = path.join(resolvePaths().dataDir, 'db', 'database.db');
+        const r = await startMcp(rt!, backend.port, dbPath);
+        const reg = readRegistry();
+        reg.mcpEnabled = r.ok;
+        writeRegistry(reg);
+        if (!r.ok) return { ok: false, running: false, error: r.error };
+        return { ok: true, running: true, port: r.port };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { ok: false, running: false, error: msg };
       }
     });
   }
@@ -175,6 +209,7 @@ async function bootstrap(): Promise<void> {
 
 app.on('will-quit', () => {
   log('app will-quit, cleaning up...');
+  try { stopMcp(); } catch {}
   try { backend?.stop(); } catch {}
   closeLogger();
 });

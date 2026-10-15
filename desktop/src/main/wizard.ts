@@ -329,9 +329,12 @@ function gateHtml(): string {
     frames: '${ICONS.image}',
   };
   var LABELS = { db:'数据库', cookiesFile:'账号 Cookie', cookies:'浏览器会话',
-    uploads:'素材上传记录', thumbnails:'封面', upload_chunks:'上传分片缓存', frames:'抽帧图片' };
+    uploads:'素材上传记录', thumbnails:'封面图片', covers:'封面缓存',
+    upload_chunks:'上传分片缓存', frames:'抽帧图片', materials:'素材库文件',
+    videoFile:'视频文件', s3_video_cache:'S3 视频缓存' };
   var KINDIC = { db:'db', cookiesFile:'cookie', cookies:'cookie', uploads:'upload',
-    thumbnails:'cover', upload_chunks:'chunk', frames:'frames' };
+    thumbnails:'cover', covers:'cover', upload_chunks:'chunk', frames:'frames',
+    materials:'folder', videoFile:'folder', s3_video_cache:'db' };
 
   function $(id){ return document.getElementById(id); }
   function show(el,on){ el.classList.toggle('hide',!on); }
@@ -495,15 +498,19 @@ function gateHtml(): string {
     if (step===2){
       var useCustom = $('use-custom-dir').checked;
       if (useCustom && !customDir){ nx.disabled=false; return; }
-      nx.disabled = true;
       var hasSrc = hasSource();
-      if (hasSrc){ show($('imp-done'),false); show($('imp-prog'),true);
-        document.querySelector('#cs3 .prog h3').textContent = hasSrc ? '正在导入数据并创建账户…' : '正在创建账户…';
-        wiz.onProgress(function(info){
-          $('bar').style.width = info.pct+'%';
-          $('ptext').textContent = '已复制 '+info.copied+' / '+info.total+' 个文件（'+info.pct+'%）';
-        });
+      // 立即切到步骤 3 显示加载动画（否则导入期间界面停在步骤 2，看起来像卡死）
+      setStep(3);
+      nx.disabled = true; // 导入期间锁定，防止中途点「进入」
+      show($('imp-done'),false); show($('imp-prog'),true);
+      if (!hasSrc){
+        document.querySelector('#cs3 .prog h3').textContent = '正在创建账户…';
+        $('ptext').textContent = '正在初始化数据目录…';
       }
+      wiz.onProgress(function(info){
+        $('bar').style.width = info.pct+'%';
+        $('ptext').textContent = '已复制 '+info.copied+' / '+info.total+' 个文件（'+info.pct+'%）';
+      });
       var res = await wiz.create({
         name: $('f-name').value.trim(),
         avatarDataUrl: avatar ? avatar.dataUrl : null,
@@ -511,7 +518,6 @@ function gateHtml(): string {
         sourceDir: hasSrc ? sourcePick.inspect.dataDir : null,
       });
       show($('imp-prog'),false); show($('imp-done'),true);
-      setStep(3);
       if (!res || !res.ok){
         $('sum-wrap').innerHTML = '<div class="hint err" style="display:block">'+ (res&&res.error||'创建失败') +'</div>';
         nx.disabled = false; nx.textContent = '返回修改';
@@ -787,34 +793,114 @@ export function runProfileGate(onDone: (profile: Profile) => void): void {
   log('[profiles] 账户门控窗口已显示');
 }
 
-/** 在主界面注入右下角「切换账户」悬浮按钮（Electron 外壳层，不侵入前端代码） */
-export function injectSwitchButton(win: BrowserWindow, profileName: string): void {
+/** 在主界面注入右下角齿轮悬浮按钮 + 圆盘菜单（切换账户 / 开启 MCP），外壳层不侵入前端代码 */
+export function injectHubButton(
+  win: BrowserWindow,
+  profileName: string,
+  mcp: { running: boolean; port: number | null },
+): void {
+  const mcpStatus = mcp.running
+    ? `已开启 · 端口 ${mcp.port}`
+    : '未开启';
   const js = `(function(){
     try {
-      var old = document.getElementById('qfs-switch-btn');
+      var old = document.getElementById('qfs-hub');
       if (old) old.remove();
-      var b = document.createElement('div');
-      b.id = 'qfs-switch-btn';
-      b.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999;' +
-        'display:flex;align-items:center;gap:7px;padding:8px 14px;border-radius:99px;' +
-        'background:rgba(15,23,42,0.78);color:#fff;font-size:12px;cursor:pointer;' +
-        "font-family:'Microsoft YaHei',system-ui,sans-serif;user-select:none;" +
-        'box-shadow:0 6px 20px rgba(2,6,23,.25);backdrop-filter:blur(6px);transition:all .15s';
-      b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      var css = document.createElement('style');
+      css.textContent = [
+        '#qfs-hub{position:fixed;right:16px;bottom:16px;z-index:9999;',
+          "font-family:'Microsoft YaHei',system-ui,sans-serif;user-select:none}",
+        '#qfs-hub .fab{width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;',
+          'background:rgba(15,23,42,0.82);color:#fff;display:flex;align-items:center;justify-content:center;',
+          'box-shadow:0 6px 20px rgba(2,6,23,.3);transition:transform .2s,background .15s;margin-left:auto}',
+        '#qfs-hub .fab:hover{background:rgba(37,99,235,.95);transform:rotate(45deg)}',
+        '#qfs-hub .menu{position:absolute;right:0;bottom:56px;display:flex;flex-direction:column;gap:8px;',
+          'align-items:flex-end;pointer-events:none}',
+        '#qfs-hub.open .menu{pointer-events:auto}',
+        '#qfs-hub .mi{opacity:0;transform:translateY(10px) scale(.9);transition:all .18s ease;',
+          'display:flex;align-items:center;gap:8px;padding:9px 16px;border-radius:12px;',
+          'background:rgba(15,23,42,0.82);color:#fff;font-size:12px;cursor:pointer;',
+          'box-shadow:0 6px 20px rgba(2,6,23,.25);backdrop-filter:blur(6px);white-space:nowrap}',
+        '#qfs-hub.open .mi{opacity:1;transform:translateY(0) scale(1)}',
+        '#qfs-hub .mi:hover{background:rgba(37,99,235,.95)}',
+        '#qfs-hub #qfs-mi-mcp{padding-right:20px}',
+        '#qfs-hub .mi svg{width:14px;height:14px;flex-shrink:0}',
+        '#qfs-hub .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}',
+        '#qfs-hub .dot.off{background:#94a3b8}',
+        '#qfs-hub .dot.on{background:#22c55e;box-shadow:0 0 6px #22c55e}',
+        '#qfs-hub .sub{font-size:10px;opacity:.75}',
+      ].join('');
+      document.head.appendChild(css);
+
+      var hub = document.createElement('div');
+      hub.id = 'qfs-hub';
+      var gear = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
         'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-        '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>' +
-        '<span>' + ${JSON.stringify('切换账户')} + '：' + ${JSON.stringify(profileName)} + '</span>';
-      b.addEventListener('mouseenter', function(){ b.style.background = 'rgba(15,23,42,0.92)'; });
-      b.addEventListener('mouseleave', function(){ b.style.background = 'rgba(15,23,42,0.78)'; });
-      b.addEventListener('click', function(){
+        '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06' +
+        'a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33' +
+        'l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09' +
+        'A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33' +
+        'H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06' +
+        'a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09' +
+        'a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+      var userIc = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
+      var zapIc = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 13 2"/></svg>';
+
+      hub.innerHTML =
+        '<div class="menu">' +
+          '<div class="mi" id="qfs-mi-switch">' + userIc + '<span>切换账户</span>' +
+            '<span class="sub">' + ${JSON.stringify(profileName)} + '</span></div>' +
+          '<div class="mi" id="qfs-mi-mcp">' + zapIc + '<span id="qfs-mcp-label">开启 MCP</span>' +
+            '<span class="dot" id="qfs-mcp-dot"></span>' +
+            '<span class="sub" id="qfs-mcp-sub"></span></div>' +
+        '</div>' +
+        '<button class="fab" id="qfs-fab" title="快捷操作">' + gear + '</button>';
+      document.body.appendChild(hub);
+
+      var mcpState = ${JSON.stringify({ running: mcp.running, port: mcp.port })};
+      function renderMcp(){
+        var dot = document.getElementById('qfs-mcp-dot');
+        var sub = document.getElementById('qfs-mcp-sub');
+        var label = document.getElementById('qfs-mcp-label');
+        if (mcpState.running) {
+          dot.className = 'dot on';
+          sub.textContent = '已开启 · 端口 ' + mcpState.port;
+          label.textContent = '关闭 MCP';
+        } else {
+          dot.className = 'dot off';
+          sub.textContent = '未开启';
+          label.textContent = '开启 MCP';
+        }
+      }
+      renderMcp();
+
+      var open = false;
+      document.getElementById('qfs-fab').addEventListener('click', function(){
+        open = !open;
+        hub.classList.toggle('open', open);
+      });
+      document.getElementById('qfs-mi-switch').addEventListener('click', function(){
         if (window.qfsShell && window.qfsShell.switchProfile) {
-          b.style.opacity = '0.5';
-          b.textContent = '正在切换…';
+          hub.classList.remove('open');
           window.qfsShell.switchProfile();
         }
       });
-      document.body.appendChild(b);
-    } catch (e) { console.error('[switch-btn]', e); }
+      document.getElementById('qfs-mi-mcp').addEventListener('click', async function(){
+        if (!(window.qfsShell && window.qfsShell.toggleMcp)) return;
+        var sub = document.getElementById('qfs-mcp-sub');
+        sub.textContent = '切换中…';
+        var res = await window.qfsShell.toggleMcp();
+        if (res && res.ok) {
+          mcpState = { running: !!res.running, port: res.port || null };
+          renderMcp();
+        } else {
+          sub.textContent = '失败：' + ((res && res.error) || '未知错误');
+        }
+      });
+    } catch (e) { console.error('[qfs-hub]', e); }
   })()`;
-  win.webContents.executeJavaScript(js).catch((e) => log('[switch-btn] 注入失败:', String(e)));
+  win.webContents.executeJavaScript(js).catch((e) => log('[hub] 注入失败:', String(e)));
 }
